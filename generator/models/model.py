@@ -124,11 +124,16 @@ class Generator(nn.Module):
 
         self.linear_q = nn.Linear(TN_DIM_FEEDFORWARD, TN_DIM_FEEDFORWARD*8)
 
+        # --- MODIFICATION START: STYLE FC ---
+        # 256 is the style vector size, projecting to hidden dim (likely 512)
+        self.style_fc = nn.Linear(256, TN_HIDDEN_DIM)
+        # --- MODIFICATION END ---
+
         self.DEC = FCNDecoder(res_norm = 'in')
 
 
         self._muE = nn.Linear(512,512)
-        self._logvarE = nn.Linear(512,512)         
+        self._logvarE = nn.Linear(512,512)        
 
         self._muD = nn.Linear(512,512)
         self._logvarD = nn.Linear(512,512)   
@@ -163,8 +168,8 @@ class Generator(nn.Module):
 
         return torch.stack(outs, 1)
 
-
-    def Eval(self, ST, QRS):
+    # --- MODIFICATION START: Update Eval signature ---
+    def Eval(self, ST, QRS, style_vector=None):
 
         batch_size = ST.shape[0]
 
@@ -215,7 +220,15 @@ class Generator(nn.Module):
                 hs = self.reparameterize(hs_mu, hs_logvar).permute(1,0,2).unsqueeze(0)
 
                             
-            h = hs.transpose(1, 2)[-1]#torch.cat([hs.transpose(1, 2)[-1], QR_EMB.permute(1,0,2)], -1)
+            h = hs.transpose(1, 2)[-1] # [Batch, Seq, Dim]
+            
+            # --- MODIFICATION START: Apply Style Vector ---
+            if style_vector is not None:
+                style = self.style_fc(style_vector) # [Batch, Dim]
+                style = style.unsqueeze(1)          # [Batch, 1, Dim]
+                h = h + style                       # Broadcast addition
+            # --- MODIFICATION END ---
+
             if ADD_NOISE: h = h + self.noise.sample(h.size()).squeeze(-1).to(DEVICE)
 
             h = self.linear_q(h)
@@ -236,11 +249,9 @@ class Generator(nn.Module):
         return OUT_IMGS
         
 
-
     
-
-
-    def forward(self, ST, QR, QRs = None, mode = 'train'):
+    # --- MODIFICATION START: Update forward signature ---
+    def forward(self, ST, QR, QRs = None, mode = 'train', style_vector=None):
 
         #Attention Visualization Init    
 
@@ -276,8 +287,15 @@ class Generator(nn.Module):
         
         hs = self.decoder(tgt, memory, query_pos=QR_EMB)
 
-                         
-        h = hs.transpose(1, 2)[-1]#torch.cat([hs.transpose(1, 2)[-1], QR_EMB.permute(1,0,2)], -1)
+                          
+        h = hs.transpose(1, 2)[-1] # [Batch, Seq, Dim]
+
+        # --- MODIFICATION START: Apply Style Vector ---
+        if style_vector is not None:
+            style = self.style_fc(style_vector)
+            style = style.unsqueeze(1)
+            h = h + style
+        # --- MODIFICATION END ---
 
         if ADD_NOISE: h = h + self.noise.sample(h.size()).squeeze(-1).to(DEVICE)
 
@@ -432,7 +450,8 @@ class TRGAN(nn.Module):
 
         return self.real_base, self.fake_base
 
-    def _generate_page(self, ST, SLEN, eval_text_encode = None, eval_len_text = None):
+    # --- MODIFICATION START: Update _generate_page signature ---
+    def _generate_page(self, ST, SLEN, eval_text_encode = None, eval_len_text = None, style_vector=None):
 
         if eval_text_encode == None:
             eval_text_encode = self.eval_text_encode
@@ -440,7 +459,9 @@ class TRGAN(nn.Module):
             eval_len_text = self.eval_len_text
 
 
-        self.fakes = self.netG.Eval(ST, eval_text_encode)
+        # Pass style_vector to Eval
+        self.fakes = self.netG.Eval(ST, eval_text_encode, style_vector=style_vector)
+    # --- MODIFICATION END ---
 
         page1s = []
         page2s = []
